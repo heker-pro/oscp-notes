@@ -1,0 +1,2 @@
+# oscp-notes
+preparation OSCP
