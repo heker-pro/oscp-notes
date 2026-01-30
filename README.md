@@ -120,7 +120,7 @@ Kita bisa langsung melakukan brute path dengan spesifik endpoint seperti berikut
 //run using pattern
 gobuster dir -u http://192.168.55.16:5002/ -w /usr/share/wordlists/dirb/common.txt -p pattern
 
-
+```
 #### Day 4
 
 Hari ini masih di module introduction web application attack, dimana kita belajar terkait beberapa informasi yaitu header, inspect element, front dan back end lalu analysis di sisi client side seperti CSS, js dan HTML. Disini juga belajar untuk melakukan intercept menggunakan burp suite.
