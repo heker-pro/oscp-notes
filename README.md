@@ -2535,7 +2535,7 @@ netsh interface portproxy add v4tov4 listenport=2222 listenaddress=192.168.50.64
 
 Lalu untuk ceknya apakah port forwarding berjalan, bisa menggunakan netstat
 ```
-netstat -anp TCP | find "2222"netstat -anp TCP | find "2222"
+netstat -anp TCP | find "2222"
 ```
 Jika ada, maka seharusnya berhasil. dan disini kita juga bisa untuk melihat seluruh konfigurasi netsh
 ```
