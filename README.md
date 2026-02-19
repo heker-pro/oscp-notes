@@ -3252,3 +3252,17 @@ tcpdump packet inspection
 ```
 sudo tcpdump -nvvvXi tun0 tcp port 8080
 ```
+
+bloodhound query cheatsheet
+
+```
+//semua nodes
+MATCH (n) RETURN n 
+
+//semua user nodes(computer/group domain)
+MATCH (n:User) RETURN n
+
+
+//cek spesifik user tertentu
+MATCH (x:User) WHERE x.name='MARCUS@BEYOND.COM' RETURN x
+```
