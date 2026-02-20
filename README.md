@@ -3266,3 +3266,9 @@ MATCH (n:User) RETURN n
 //cek spesifik user tertentu
 MATCH (x:User) WHERE x.name='MARCUS@BEYOND.COM' RETURN x
 ```
+
+NTLM hash cracking
+
+```
+hashcat -m 1000 ntlm_wario.txt /usr/share/wordlists/rockyou.txt --force
+```
