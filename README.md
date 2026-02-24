@@ -3343,3 +3343,17 @@ check all shared smb
 ```
 nxc smb 10.48.166.9 -u '' -p '' -M spider_plus --timeout=60
 ```
+
+rid brute force crackmapexec
+
+```
+netexec smb 10.48.166.9 -u T-Skid -p 'tj072889*' --rid-brute
+```
+
+RPC client for enumeration user domain
+```
+rpcclient -U "" -N 10.48.166.9 -c "enumdomusers"
+
+//username & pass
+rpcclient -U "user%pass" -N 10.48.166.9 -c "enumdomusers"
+```
