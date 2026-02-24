@@ -3361,3 +3361,13 @@ rpcclient -U "" -N 10.48.166.9 -c "enumdomusers"
 //username & pass
 rpcclient -U "user%pass" -N 10.48.166.9 -c "enumdomusers"
 ```
+
+
+impacket lookupsid
+```
+impacket-lookupsid anonymous@10.64.181.62 -no-pass
+
+//guest
+
+impacket-lookupsid guest@10.64.181.62 -no-pass
+```
